@@ -1,0 +1,43 @@
+"""OneBot v11 协议层:消息模型、事件类型与 Bot 客户端。"""
+from .models import (
+    Event,
+    GroupAdminNoticeEvent,
+    GroupDecreaseNoticeEvent,
+    GroupIncreaseNoticeEvent,
+    GroupMessageEvent,
+    GroupRecallNoticeEvent,
+    GroupRequestEvent,
+    LifecycleMetaEvent,
+    Message,
+    MessageEvent,
+    MessageSegment,
+    MetaEvent,
+    NoticeEvent,
+    PrivateMessageEvent,
+    RequestEvent,
+    Sender,
+    parse_event,
+)
+from .bot import Bot, ApiError
+
+__all__ = [
+    "MessageSegment",
+    "Message",
+    "Sender",
+    "Event",
+    "MessageEvent",
+    "GroupMessageEvent",
+    "PrivateMessageEvent",
+    "NoticeEvent",
+    "GroupIncreaseNoticeEvent",
+    "GroupDecreaseNoticeEvent",
+    "GroupAdminNoticeEvent",
+    "GroupRecallNoticeEvent",
+    "RequestEvent",
+    "GroupRequestEvent",
+    "MetaEvent",
+    "LifecycleMetaEvent",
+    "parse_event",
+    "Bot",
+    "ApiError",
+]

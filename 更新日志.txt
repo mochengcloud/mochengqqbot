@@ -1,0 +1,146 @@
+陌城qqbot框架 更新日志
+========================================
+
+v2.0.1-beta
+----------------------------------------
+【新增】在线自动更新功能
+  - 新增版本检测模块 core/updater.py,调用官网 API 获取最新版本数据
+  - 版本对比支持语义化版本号,正确处理 beta/正式版类型关系
+  - WebUI 登录后自动检测新版本,弹窗提示(显示版本名称+版本号)
+  - 版本详情页支持一键在线更新:下载→解压→备份→覆盖→重启 全自动
+  - 更新进度实时显示(下载/解压/覆盖/重启各阶段)
+  - 更新失败自动回滚,保证数据安全
+  - 严格保留 config/ 和 venv/ 目录,不破坏用户配置与运行环境
+  - 启动脚本(start.bat/start.sh)启动前自动检测,交互式询问是否更新
+
+【新增】WebUI 版本更新页面
+  - 侧边栏新增"版本更新"入口
+  - 展示当前版本、最新版本、更新时间、下载链接
+  - 一键在线更新,无需手动下载覆盖
+
+v2.0.0 正式版
+----------------------------------------
+【变更】版本号升级为 v2.0.0 正式版
+
+【修复】网页截图功能
+  - 根因:Windows 下 SelectorEventLoop 不支持 asyncio 子进程操作,
+          asyncio.create_subprocess_exec 会抛出 NotImplementedError,
+          导致 Chrome 从未启动,截图从未生成。
+  - 修复:改用 subprocess.run() + asyncio.to_thread() 在线程池中运行 Chrome,
+          绕过事件循环的子进程限制。
+  - 图片发送改用 base64:// 协议(OneBot v11 标准),兼容性最好。
+  - 增强错误诊断:异常信息显示类型名与 repr,便于排查。
+
+【修复】进群验证重复触发
+  - 根因:消息处理器中存在 fallback 逻辑,对不在验证状态但刚进群的用户
+          会再次触发验证,导致进群后首次发言时重复收到验证提示。
+  - 修复:移除消息处理器中的 fallback 触发逻辑,验证仅在进群通知时发起。
+          消息处理只针对已在验证流程中的用户(验证码校验/发言通过)。
+  - 优化:重新发送验证提示时复用原验证码,避免验证码不一致。
+          重新发送时取消原有的超时任务,避免重复创建。
+
+【优化】发布版打包 WebUI 构建产物
+  - 发布版直接包含已构建的 WebUI 前端(dist 目录),用户无需等待构建
+  - start.bat 优先检测 webui\frontend\dist\index.html,已存在则跳过构建
+
+
+v2.0.0-beta-fix2
+----------------------------------------
+【变更】系统名称统一为「陌城qqbot框架」
+  - 启动横幅、启动脚本、命令行描述等处统一使用新名称
+
+【变更】启动脚本(start.bat)全面中文化
+  - 标题、步骤提示、错误信息、警告等全部改为中文
+  - 步骤:[1/5]检查Python → [2/5]虚拟环境 → [3/5]安装依赖 → [4/5]构建WebUI → [5/5]启动框架
+
+【新增】WebUI 后台配置入口
+  - 连接配置页新增「全局并发配置」Card,可在线修改 dispatch.max_concurrent(1~512),即时生效
+  - AI配置页供应商管理新增故障转移说明提示
+
+【修复】发布版前端产物不匹配
+  - 修复打包 zip 内前端产物为旧版导致菜单与根目录运行版不一致的问题
+  - 打包前清理 dist 旧产物残留,确保 zip 内为最新构建
+
+【变更】版本号更新为 v2.0.0-beta-fix2
+
+
+v2.0.0-beta-update1
+----------------------------------------
+【新增】群列表自动同步
+  - 打开任意会显示群列表的页面(群设置、Dashboard 群数等),后端自动静默同步
+    OneBot get_group_list,无需再手动点「同步群列表」按钮
+  - 同步失败时降级返回本地数据,不阻塞页面、不报 503
+  - 群名持久化到 group_settings[gid].group_name,重启后不丢失
+
+【新增】AI 供应商故障转移
+  - AI 聊天调用失败时,自动按顺序尝试其它已启用的 AI 供应商
+  - 群配置的 provider 作为首选,其它 enabled 供应商作为 fallback 池
+  - 全部供应商都不可用时,回复「无可用AI供应商,请联系管理员」
+  - 充分利用已配置的多个供应商,提升 AI 聊天可用性
+
+【新增】全局并发可配置
+  - 新增 dispatch.max_concurrent 配置项(默认 16),限制并发事件处理任务数
+  - 高并发时自动排队,避免压垮内存与 AI 供应商
+  - WebUI 后台新增 /api/dispatch 接口,可在线查看与修改并发数(1~512)
+  - 修改即时生效,无需重启
+
+【优化】性能
+  - 事件间并发受全局 Semaphore 限流,事件内 matcher 仍按优先级串行(保留 block 语义)
+  - AI HTTP 会话复用共享连接池,减少连接建立开销
+  - 插件加载不阻塞主循环,单个插件失败不影响其它插件
+
+
+v2.0.0-beta-fix1
+----------------------------------------
+【修复】AI 聊天消息串群问题
+  - 根因:Matcher 作为全局单例,事件分发(dispatch)时将 bot/event 存储在单例属性上。
+          AI 聊天 handler 内部有长达数秒~120秒的 await(调用大模型 API),在此期间
+          另一个群的新事件触发 dispatch 会覆盖单例上的 event,导致 handler 恢复后
+          调用 matcher.finish() 时使用了被覆盖的 event,把 A 群的 AI 回复发到了 B 群。
+  - 修复:在 core/event_bus.py 中引入 contextvars.ContextVar,每次 dispatch 调用
+          handler 前将当前 bot/event 绑定到协程上下文,Matcher.send/finish 优先从
+          ContextVar 读取,确保并发下仍路由到正确的事件目标。
+  - 兼容性:Matcher.send/finish 对外 API 签名不变,无需修改任何插件;self.bot/
+            self.event 属性仍保留作为 fallback。
+  - 影响范围:修复所有 handler 内含 await 且通过 matcher.send/finish 发送消息的
+              插件(AI 聊天因 API 耗时最长而最易暴露,其它插件也一并受益)。
+
+
+v2.0.0-beta
+----------------------------------------
+【新增】脱离 nonebot,自包含框架
+  - 移除 nonebot2 / nonebot-adapter-onebot 依赖
+  - 新增 core/ 核心包:事件总线(EventBus)、权限、生命周期、插件加载器、OneBot v11 协议层
+  - 21 个插件从 nonebot 导入迁移到 core 导入,功能保持不变
+  - requirements.txt 剔除 nonebot 相关依赖
+
+【新增】控制台详细日志
+  - 启动时配置 Python logging,带时间戳格式输出到 stdout
+  - WebSocket 连接/断连/重连输出日志
+  - 收到群消息/私聊消息/通知/请求输出日志(含群号、用户、内容摘要)
+  - 命令执行输出命令名与执行结果
+  - 插件加载输出成功/失败日志
+  - API 错误输出简洁单行警告(同类 60 秒节流,避免刷屏)
+
+【新增】路径可移植性
+  - main.py 定义 BASE_DIR 并 os.chdir 到项目根目录
+  - config_manager.py、log_manager.py 默认路径基于 __file__ 计算绝对路径
+  - 全部 7 个数据插件(group_essence_stats/group_board_games/group_checkin/
+    group_points/group_games/group_simulation/group_stats)的数据路径改为基于
+    __file__ 的绝对路径,程序可在任意工作目录运行
+
+【新增】版本号显示
+  - 新增 core/version.py 定义 __version__
+  - 启动横幅显示 Version: v2.0.0-beta
+
+【优化】一键启动脚本健壮性
+  - start.bat 使用 cd /d "%~dp0" 切换到脚本目录
+  - 使用 %PY% -m pip 安装依赖,绕过中文路径下 pip 启动器编码问题
+  - WebUI 绑定 127.0.0.1 并关闭 access_log,减少无效 HTTP 请求噪音
+  - Windows 下使用 Selector 事件循环,避免 ProactorReadPipeTransport 错误
+
+【修复】运行时错误
+  - 修复 event.to_me 属性缺失(GroupMessageEvent/PrivateMessageEvent)
+  - 修复 bot.send 因 isinstance 判断失败导致群消息发到私聊(改用属性 duck typing)
+  - 修复 CQ 码(如 [CQ:at,qq=xxx])被当作纯文本发送的问题(新增正则解析器)
+  - 新增 ApiError 异常类,API 失败不再抛 RuntimeError 满屏 traceback

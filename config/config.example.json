@@ -1,0 +1,46 @@
+{
+  "bot": {
+    "superusers": [],
+    "nickname": "陌城网络-qqbot",
+    "command_start": [""]
+  },
+  "onebot": {
+    "mode": "ws_client",
+    "ws_client": {
+      "enabled": true,
+      "url": "ws://127.0.0.1:3001",
+      "access_token": "",
+      "reconnect_interval": 5,
+      "heartbeat_interval": 30
+    },
+    "ws_server": {
+      "enabled": false,
+      "host": "0.0.0.0",
+      "port": 3000,
+      "access_token": ""
+    },
+    "http": {
+      "enabled": false,
+      "url": "http://127.0.0.1:3000",
+      "access_token": "",
+      "timeout": 30
+    }
+  },
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8080,
+    "webui_port": 8081
+  },
+  "menu": {
+    "enabled": true,
+    "title": "📋 菜单",
+    "trigger": "菜单",
+    "description": "发送对应名称查看详细功能",
+    "categories": {}
+  },
+  "group_settings": {},
+  "webui": {
+    "access_token": "",
+    "jwt_secret": ""
+  }
+}
