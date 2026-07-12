@@ -230,3 +230,143 @@ class Bot:
 
     async def send_like(self, user_id: int, times: int = 10) -> Any:
         return await self.call_api("send_like", user_id=user_id, times=times)
+
+    async def set_group_special_title(
+        self, group_id: int, user_id: int, special_title: str = ""
+    ) -> Any:
+        """设置群头衔。"""
+        return await self.call_api(
+            "set_group_special_title",
+            group_id=group_id,
+            user_id=user_id,
+            special_title=special_title,
+        )
+
+    async def set_group_name(self, group_id: int, group_name: str) -> Any:
+        """设置群名。"""
+        return await self.call_api(
+            "set_group_name", group_id=group_id, group_name=group_name
+        )
+
+    async def set_group_card(
+        self, group_id: int, user_id: int, card: str = ""
+    ) -> Any:
+        """设置群名片。"""
+        return await self.call_api(
+            "set_group_card",
+            group_id=group_id,
+            user_id=user_id,
+            card=card,
+        )
+
+    async def send_group_notice(
+        self, group_id: int, content: str
+    ) -> Any:
+        """发送群公告。"""
+        return await self.call_api(
+            "_send_group_notice",
+            group_id=group_id,
+            content=content,
+        )
+
+    async def delete_friend(self, user_id: int) -> Any:
+        """删除好友。"""
+        return await self.call_api("delete_friend", user_id=user_id)
+
+    async def set_friend_add_request(
+        self, flag: str, approve: bool = True, remark: str = ""
+    ) -> Any:
+        """处理加好友请求。"""
+        return await self.call_api(
+            "set_friend_add_request",
+            flag=flag,
+            approve=approve,
+            remark=remark,
+        )
+
+    async def set_group_add_request(
+        self, flag: str, sub_type: str, approve: bool = True
+    ) -> Any:
+        """处理加群请求。"""
+        return await self.call_api(
+            "set_group_add_request",
+            flag=flag,
+            sub_type=sub_type,
+            approve=approve,
+        )
+
+    async def get_msg(self, message_id: int) -> Any:
+        """获取消息。"""
+        return await self.call_api("get_msg", message_id=message_id)
+
+    async def get_login_info(self) -> Any:
+        """获取登录号信息。"""
+        return await self.call_api("get_login_info")
+
+    async def get_image(self, file: str) -> Any:
+        """获取图片信息。"""
+        return await self.call_api("get_image", file=file)
+
+    async def can_send_image(self) -> Any:
+        """检查是否支持发送图片。"""
+        return await self.call_api("can_send_image")
+
+    async def can_send_record(self) -> Any:
+        """检查是否支持发送语音。"""
+        return await self.call_api("can_send_record")
+
+    async def get_status(self) -> Any:
+        """获取运行状态。"""
+        return await self.call_api("get_status")
+
+    async def get_version_info(self) -> Any:
+        """获取版本信息。"""
+        return await self.call_api("get_version_info")
+
+    async def reload_event_filter(self) -> Any:
+        """重载事件过滤器。"""
+        return await self.call_api("reload_event_filter")
+
+    async def set_group_anonymous_ban(
+        self,
+        group_id: int,
+        anonymous: Optional[dict] = None,
+        anonymous_flag: str = "",
+        duration: int = 1800,
+    ) -> Any:
+        """禁言匿名成员。"""
+        return await self.call_api(
+            "set_group_anonymous_ban",
+            group_id=group_id,
+            anonymous=anonymous or {},
+            anonymous_flag=anonymous_flag,
+            duration=duration,
+        )
+
+    async def set_group_anonymous(
+        self, group_id: int, enable: bool
+    ) -> Any:
+        """设置群匿名。"""
+        return await self.call_api(
+            "set_group_anonymous", group_id=group_id, enable=enable
+        )
+
+    async def set_essence_msg(self, message_id: int) -> Any:
+        """设为精华消息。"""
+        return await self.call_api(
+            "set_essence_msg", message_id=message_id
+        )
+
+    async def delete_essence_msg(self, message_id: int) -> Any:
+        """移除精华消息。"""
+        return await self.call_api(
+            "delete_essence_msg", message_id=message_id
+        )
+
+    async def get_essence_msg_list(
+        self, group_id: int
+    ) -> Any:
+        """获取群精华消息列表。"""
+        return await self.call_api(
+            "get_essence_msg_list", group_id=group_id
+        )

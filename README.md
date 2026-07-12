@@ -255,6 +255,157 @@ qqbot/
 └── venv/                   # 虚拟环境(自动创建)
 ```
 
+## 插件开发
+
+陌城qqbot框架提供完整的插件开发接口,开发者可以编写自定义插件扩展功能。**自定义插件不会被在线更新覆盖。**
+
+> 📖 完整文档请访问[官网插件开发文档](https://bot.mcyvps.top/develop.php)
+
+### 快速开始
+
+在 `plugins/` 目录下创建 `.py` 文件(文件名不要以 `_` 开头),框架启动时自动加载。
+
+### 插件骨架
+
+```python
+import os
+from core import on_command, on_startup, on_shutdown, SUPERUSER
+from core.onebot import Bot, GroupMessageEvent, Message, CommandArg
+from plugins.utils import reply, JsonDataManager
+from core.menu_registry import menu_registry
+
+# 数据管理器(可选)
+class MyDataManager(JsonDataManager):
+    def __init__(self):
+        super().__init__("my_plugin.json", default_data={})
+
+data_mgr = MyDataManager()
+
+# 注册命令
+my_cmd = on_command("我的命令", priority=1, block=True,
+                    permission=SUPERUSER)
+
+@my_cmd.handle()
+async def handle_my_cmd(bot: Bot, event: GroupMessageEvent,
+                        args: Message = CommandArg()):
+    text = args.extract_plain_text().strip()
+    await my_cmd.finish(reply(event, f"你输入了: {text}"))
+
+# 生命周期钩子(可选)
+@on_startup
+async def _startup():
+    data_mgr.load()
+
+@on_shutdown
+async def _shutdown():
+    data_mgr.shutdown()
+
+# 菜单注册(文件底部)
+menu_registry.register(
+    category="我的插件",
+    item_name="我的命令",
+    text="🎯 我的命令",
+    category_title="🎯◇━我的插件━◇🔧",
+    category_trigger="我的插件",
+    category_description="自定义功能示例",
+)
+```
+
+### 统一消息构造
+
+所有插件应使用 `plugins/utils.py` 提供的函数,保证消息格式统一:
+
+| 函数 | 说明 |
+|------|------|
+| `reply(event, msg)` | 通用回复(自动识别群/私聊) |
+| `reply_msg(event, msg)` | 群消息回复(引用+@+内容) |
+| `reply_private(event, msg)` | 私聊回复 |
+| `at_msg(user_id, msg)` | @用户+内容(通知场景) |
+| `text_msg(text)` | 纯文本 |
+| `at(user_id)` | @消息段 |
+| `image(url/file/base64)` | 图片消息段 |
+| `face(face_id)` | QQ表情 |
+| `record(url/file/base64)` | 语音 |
+
+### 事件注册
+
+```python
+from core import on_command, on_message, on_notice, on_request
+
+# 命令(支持权限检查)
+cmd = on_command("命令名", priority=1, block=True,
+                 permission=GROUP_ADMIN | SUPERUSER)
+
+# 消息监听(不触发命令)
+msg_handler = on_message(priority=99, block=False)
+
+# 通知事件(进群/撤回等)
+notice_handler = on_notice(priority=15, block=False)
+
+# 请求事件(加好友/加群)
+request_handler = on_request(priority=10, block=False)
+```
+
+- `priority`: 越小越先执行(1=常规命令, -1=日志采集, 99=消息收集)
+- `block`: True 则执行后停止后续 matcher
+
+### 权限系统
+
+```python
+from core import SUPERUSER, GROUP_ADMIN, GROUP_OWNER
+
+# 在 on_command 中声明(推荐)
+cmd = on_command("管理命令", permission=GROUP_ADMIN | GROUP_OWNER | SUPERUSER)
+
+# 或在 handler 内手动检查
+if await SUPERUSER(bot, event):
+    # 超管逻辑
+```
+
+### 数据持久化
+
+继承 `JsonDataManager` 基类,自动获得懒加载/线程安全/延迟保存:
+
+```python
+from plugins.utils import JsonDataManager
+
+class CounterManager(JsonDataManager):
+    def __init__(self):
+        super().__init__("counter.json", default_data={"count": 0})
+
+counter = CounterManager()
+
+# 使用
+counter.load()
+counter.data["count"] += 1
+counter.mark_dirty()  # 标记脏数据,3秒后自动保存
+```
+
+### Bot API
+
+Handler 中通过 `bot: Bot` 参数调用 OneBot API:
+
+```python
+await bot.send(event, "消息")              # 自动识别群/私聊
+await bot.send_group_msg(group_id, "消息")  # 发送群消息
+await bot.send_private_msg(user_id, "消息") # 发送私聊
+await bot.delete_msg(message_id)            # 撤回消息
+await bot.set_group_ban(group_id, user_id, duration)  # 禁言
+await bot.set_group_kick(group_id, user_id)           # 踢人
+await bot.set_group_special_title(group_id, user_id, title)  # 设置头衔
+await bot.send_group_notice(group_id, content)  # 群公告
+await bot.call_api(action, **params)  # 通用 API 调用
+```
+
+完整 API 列表见[官网文档](https://bot.mcyvps.top/develop.php)。
+
+### 自定义插件与在线更新
+
+- 自定义插件放在 `plugins/` 目录下
+- 在线更新时只覆盖框架内置插件,**自定义插件原样保留**
+- 命名建议加前缀避免冲突(如 `custom_xxx.py`)
+- 文件名不要以 `_` 开头(会被加载器跳过)
+
 ## 常见问题
 
 **Q: 启动时提示"未找到 Python"?**

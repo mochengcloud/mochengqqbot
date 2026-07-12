@@ -394,6 +394,15 @@ _BACKUP_FILES = [
 # 更新覆盖时严格保留(不覆盖)的路径(相对 base_dir)
 _PRESERVE_PATHS = ["config", "venv", "webui/frontend/node_modules"]
 
+# 框架内置插件清单(更新时只覆盖这些文件,其他 .py 视为用户自定义插件并保留)
+_BUILTIN_PLUGINS = {
+    "group_admin", "group_ai_chat", "group_board_games", "group_checkin",
+    "group_content_check", "group_essence_stats", "group_fun", "group_games",
+    "group_like", "group_newcomer", "group_notify", "group_owner",
+    "group_points", "group_schedule", "group_simulation", "group_stats",
+    "group_verify", "group_webmaster", "custom_api", "utils",
+}
+
 
 def _normalize_rel(path: str) -> str:
     """将路径规范化为正斜杠形式,便于前缀匹配。"""
@@ -518,6 +527,8 @@ def _overwrite_files(src_root: str, base_dir: str) -> None:
     """将 src_root 下的文件覆盖到 base_dir。
 
     严格保留 _PRESERVE_PATHS 中的路径(不进入、不创建、不覆盖)。
+    对于 plugins/ 目录:仅覆盖 _BUILTIN_PLUGINS 清单中的内置插件,
+    其他 .py 文件视为用户自定义插件,原样保留(不覆盖、不删除)。
     """
     for root, dirs, files in os.walk(src_root):
         rel = _normalize_rel(os.path.relpath(root, src_root))
@@ -535,6 +546,12 @@ def _overwrite_files(src_root: str, base_dir: str) -> None:
             rel_file = (rel + "/" + fn) if rel != "." else fn
             if _is_under(rel_file, _PRESERVE_PATHS):
                 continue
+            # plugins/ 目录下只覆盖内置插件,保留用户自定义插件
+            if rel == "plugins" and fn.endswith(".py"):
+                stem = fn[:-3]
+                if stem not in _BUILTIN_PLUGINS:
+                    # 用户自定义插件:不覆盖
+                    continue
             shutil.copy2(os.path.join(root, fn), os.path.join(dst_root, fn))
 
 
