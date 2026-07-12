@@ -452,11 +452,27 @@ class EventBus:
         else:
             return
 
+        # 消息事件接收日志(便于排查事件是否到达 dispatch)
+        if post_type == "message":
+            adapter_type = getattr(bot, "adapter_type", "onebot_v11")
+            msg_type = getattr(event, "message_type", "?")
+            gid = getattr(event, "group_id", "-")
+            uid = getattr(event, "user_id", "?")
+            raw = getattr(event, "raw_message", "") or ""
+            if isinstance(raw, str):
+                raw = raw[:50]
+            logger.info(
+                f"[消息] 适配器={adapter_type} 类型={msg_type} 群={gid} 用户={uid} 内容={raw!r}"
+            )
+
         # 获取 command_start(仅消息事件需要)
         command_starts = _get_command_start() if "command" in event_types else []
 
         # 2. 收集匹配的 matcher
         matched: List[tuple] = []  # (matcher, cmd_args, cmd_name)
+        # 统计命令匹配情况(诊断用)
+        cmd_match_count = 0
+        cmd_total = 0
         for matcher in self._matchers:
             if matcher.event_type not in event_types:
                 continue
@@ -466,13 +482,23 @@ class EventBus:
 
             # 命令匹配
             if matcher.event_type == "command":
+                cmd_total += 1
                 result = self._match_command(event, matcher, command_starts)
                 if result is None:
                     continue
                 cmd_name, args_text = result
                 cmd_args = self._build_args_message(event, args_text)
+                cmd_match_count += 1
 
             matched.append((matcher, cmd_args, cmd_name))
+
+        # 命令匹配诊断:如果有命令但没匹配上,输出详情
+        if cmd_total > 0 and cmd_match_count == 0:
+            text = event.get_plaintext().strip()[:50] if event.get_plaintext() else ""
+            logger.info(
+                f"[命令] 未匹配 消息={text!r} 命令总数={cmd_total} "
+                f"command_starts={command_starts}"
+            )
 
         if not matched:
             return
@@ -493,9 +519,16 @@ class EventBus:
             if matcher.permission is not None:
                 try:
                     permitted = await matcher.permission(bot, event)
-                except Exception:
+                except Exception as e:
                     permitted = False
+                    logger.warning(f"[权限] 检查异常 cmd={cmd_name} error={e}")
                 if not permitted:
+                    if cmd_name is not None:
+                        adapter_type = getattr(bot, "adapter_type", "onebot_v11")
+                        uid = getattr(event, "user_id", "?")
+                        logger.info(
+                            f"[权限] 拒绝 cmd={cmd_name} 用户={uid} 适配器={adapter_type}"
+                        )
                     continue
 
             # 跳过未注册 handler 的 matcher
@@ -513,7 +546,8 @@ class EventBus:
             )
 
             if cmd_name is not None:
-                logger.info(f"[命令] {cmd_name} | 用户={getattr(event, 'user_id', '?')} 群={getattr(event, 'group_id', '-')}")
+                adapter_type = getattr(bot, "adapter_type", "onebot_v11")
+                logger.info(f"[命令] {cmd_name} | 用户={getattr(event, 'user_id', '?')} 群={getattr(event, 'group_id', '-')} | 适配器={adapter_type}")
             # 调用 handler
             # 绑定当前 bot/event 到 ContextVar,防止并发 dispatch 覆盖单例属性导致串群
             bot_token = _current_bot.set(bot)

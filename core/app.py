@@ -5,7 +5,6 @@
 import argparse
 import asyncio
 import logging
-import os
 import sys
 import threading
 
@@ -14,7 +13,6 @@ if sys.platform == "win32":
 
 from config_manager import config_manager
 from log_manager import log_manager
-from core.connection import WSClientManager, WSServerManager
 from core.lifecycle import get_driver
 from core.plugin_loader import load_plugins
 from core.version import __version__
@@ -48,25 +46,24 @@ class BotApp:
             host: 监听地址
             port: Bot 端口(也用于反向 WS 服务)
             webui_port: WebUI 端口
-            mode: "ws_client" 或 "ws_server"
-            ws_url: 正向 WS 连接 URL(ws_client 模式)
-            access_token: WS 鉴权 token
+            mode: "ws_client" 或 "ws_server"(保留向后兼容,不再使用)
+            ws_url: 正向 WS 连接 URL(保留向后兼容,不再使用)
+            access_token: WS 鉴权 token(保留向后兼容,不再使用)
             webui_enabled: 是否启动 WebUI
         """
         self.host = host
         self.port = port
         self.webui_port = webui_port
-        self.mode = mode
-        self.ws_url = ws_url
-        self.access_token = access_token
+        self.mode = mode  # 保留但不再使用,仅向后兼容
+        self.ws_url = ws_url  # 保留但不再使用
+        self.access_token = access_token  # 保留但不再使用
         self.webui_enabled = webui_enabled
 
     # ---------------- 内部辅助 ----------------
 
     def _print_banner(self, title, show_webui=True):
         """打印连接信息横幅。"""
-        onebot_cfg = config_manager.get_onebot_config()
-        mode = onebot_cfg.get("mode", "ws_client")
+        adapters = config_manager.get_adapters()
         print("=" * 50)
         print(f"  {title}")
         print(f"  Version:     {__version__}")
@@ -75,37 +72,25 @@ class BotApp:
         if show_webui:
             print(f"  WebUI Port:  {self.webui_port}")
             print(f"  WebUI URL:   http://127.0.0.1:{self.webui_port}")
-        print(f"  OneBot Mode: {mode}")
-        if mode == "ws_client":
-            ws_client = onebot_cfg.get("ws_client", {})
-            url = ws_client.get("url", "ws://127.0.0.1:3001")
-            token = ws_client.get("access_token", "")
-            print(f"  Connecting to: {url}")
-            if token:
-                print(f"  Access Token: ***")
-        elif mode == "ws_server":
-            ws_server = onebot_cfg.get("ws_server", {})
-            print(f"  WS Server: {ws_server.get('host', '0.0.0.0')}:{ws_server.get('port', 3000)}")
+        print(f"  Adapters:    {len(adapters)} 个")
+        for i, a in enumerate(adapters, 1):
+            atype = a.get("type", "?")
+            name = a.get("name", "")
+            enabled = "启用" if a.get("enabled", True) else "禁用"
+            print(f"    [{i}] {name} ({atype}) - {enabled}")
+            if atype == "onebot_v11":
+                cfg = a.get("config", {})
+                mode = cfg.get("mode", "ws_client")
+                if mode == "ws_client":
+                    print(f"        模式: ws_client → {cfg.get('url', '')}")
+                else:
+                    print(f"        模式: ws_server → {cfg.get('host', '')}:{cfg.get('port', 8080)}")
+            elif atype == "qq_official":
+                cfg = a.get("config", {})
+                print(f"        AppID: {cfg.get('app_id', '')}")
         webui_config = config_manager.get_webui_config()
         print(f"  WebUI Token: {webui_config.get('access_token', '未设置')}")
         print("=" * 50)
-
-    def _log_mode(self):
-        """根据模式记录连接日志。"""
-        onebot_cfg = config_manager.get_onebot_config()
-        mode = onebot_cfg.get("mode", "ws_client")
-        if mode == "ws_client":
-            ws_client = onebot_cfg.get("ws_client", {})
-            log_manager.log_connection(
-                "connecting",
-                f"Connecting to {ws_client.get('url', 'ws://127.0.0.1:3001')}",
-            )
-        elif mode == "ws_server":
-            ws_server = onebot_cfg.get("ws_server", {})
-            log_manager.log_connection(
-                "listening",
-                f"WS Server listening on {ws_server.get('port', 3000)}",
-            )
 
     def _start_webui_thread(self):
         """在守护线程中启动 WebUI。"""
@@ -130,17 +115,35 @@ class BotApp:
 
     # ---------------- Bot 启动核心 ----------------
 
-    def _run_ws_client(self):
-        """正向 WS 客户端模式:Bot 主动连接 OneBot 实现的 WS 服务端。"""
+    def _run_adapters(self):
+        """启动所有适配器(替代原 _run_bot)。"""
+        from core.adapters.manager import get_adapter_manager
 
         async def _main():
             load_plugins("plugins")
             driver = get_driver()
             await driver.trigger_startup()
+            # 使用全局单例,WebUI 也能访问同一实例
+            manager = get_adapter_manager()
             try:
-                manager = WSClientManager()
-                await manager.start(self.ws_url, self.access_token)
+                await manager.start_all()
+                # 保持运行,直到被中断
+                # 使用 Event 让主协程等待,避免 start_all 返回后立即退出
+                stop_event = asyncio.Event()
+                # 注册信号处理(可选,Linux 下生效)
+                try:
+                    import signal
+                    loop = asyncio.get_running_loop()
+                    for sig in (signal.SIGINT, signal.SIGTERM):
+                        try:
+                            loop.add_signal_handler(sig, stop_event.set)
+                        except (NotImplementedError, RuntimeError):
+                            pass  # Windows 不支持
+                except Exception:
+                    pass
+                await stop_event.wait()
             finally:
+                await manager.stop_all()
                 await driver.trigger_shutdown()
 
         try:
@@ -148,48 +151,21 @@ class BotApp:
         except KeyboardInterrupt:
             pass
 
-    def _run_ws_server(self):
-        """反向 WS 服务端模式:OneBot 实现主动连接 Bot 的 WS 服务端。"""
-        import uvicorn
-        from fastapi import FastAPI
-
-        load_plugins("plugins")
-        driver = get_driver()
-        asyncio.run(driver.trigger_startup())
-        try:
-            app = FastAPI()
-            manager = WSServerManager()
-            manager.setup_routes(app, self.access_token)
-            uvicorn.run(app, host=self.host, port=self.port)
-        finally:
-            asyncio.run(driver.trigger_shutdown())
-
-    def _run_bot(self):
-        """根据 mode 启动 Bot 主循环。"""
-        if self.mode == "ws_client":
-            self._run_ws_client()
-        elif self.mode == "ws_server":
-            self._run_ws_server()
-        else:
-            raise ValueError(f"Unknown mode: {self.mode}")
-
     # ---------------- 对外入口 ----------------
 
     def run(self):
         """默认模式:同时启动 Bot + WebUI(线程)"""
         self._print_banner("陌城qqbot框架 - 正在启动...", show_webui=True)
         log_manager.log_connection("started", f"Bot starting on port {self.port}")
-        self._log_mode()
         if self.webui_enabled:
             self._start_webui_thread()
-        self._run_bot()
+        self._run_adapters()
 
     def run_bot_only(self):
         """仅启动 Bot"""
         self._print_banner("QQ Bot Manager - Bot Only Mode", show_webui=False)
         log_manager.log_connection("started", f"Bot starting on port {self.port}")
-        self._log_mode()
-        self._run_bot()
+        self._run_adapters()
 
     def run_webui_only(self):
         """仅启动 WebUI"""
@@ -223,39 +199,22 @@ def main():
     args = parser.parse_args()
 
     server_config = config_manager.get_server_config()
-    onebot_config = config_manager.get_onebot_config()
-
     host = args.host or server_config.get("host", "0.0.0.0")
     port = args.port or server_config.get("port", 8080)
     webui_port = args.webui_port or server_config.get("webui_port", 8081)
-
-    mode = onebot_config.get("mode", "ws_client")
-    if mode == "ws_client":
-        ws_cfg = onebot_config.get("ws_client", {})
-        ws_url = ws_cfg.get("url", "ws://127.0.0.1:3001")
-        access_token = ws_cfg.get("access_token", "")
-    elif mode == "ws_server":
-        ws_cfg = onebot_config.get("ws_server", {})
-        ws_url = ""
-        access_token = ws_cfg.get("access_token", "")
-    else:
-        ws_url = ""
-        access_token = ""
 
     app = BotApp(
         host=host,
         port=port,
         webui_port=webui_port,
-        mode=mode,
-        ws_url=ws_url,
-        access_token=access_token,
         webui_enabled=True,
     )
 
     if args.webui:
         app.run_webui_only()
     elif args.bot:
-        app.run_bot_only()
+        # bot only 模式也用 AdapterManager 启动
+        app.run()
     else:
         app.run()
 

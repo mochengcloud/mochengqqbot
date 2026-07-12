@@ -1,6 +1,6 @@
 # 陌城qqbot框架
 
-基于 Python 和 OneBot v11 协议的 QQ 群管机器人框架,自包含架构,开箱即用,带有可视化 WebUI 管理界面。
+基于 Python 的 QQ 群管机器人框架,自包含架构,开箱即用,带有可视化 WebUI 管理界面。支持多适配器架构,可同时接入 OneBot v11 协议端(NapCat/Lagrange 等)和 QQ 官方机器人接口。
 
 ## 官方资源
 
@@ -15,6 +15,8 @@
 ### 核心能力
 - 🧩 自包含框架,脱离 nonebot,开箱即用
 - 📡 完整支持 OneBot v11 协议,兼容 NapCat / Lagrange / go-cqhttp
+- 🔌 多适配器架构,支持 OneBot v11 和 QQ 官方机器人接口,WebUI 可视化管理多个适配器
+- 🛡️ 适配器严格隔离,OneBot 调 OneBot、官方调官方,互不混淆
 - 🔌 21 个内置插件(群管理、AI 对话、签到、积分、统计等)
 - 🖥️ WebUI 可视化管理后台,告别编辑配置文件
 - 🔀 多 AI 供应商故障转移,接口不可用时自动切换
@@ -40,6 +42,7 @@
 ### WebUI 功能
 - 多级菜单管理(可编辑标题、触发词、描述)
 - OneBot 连接配置(支持 WS 客户端/服务端模式)
+- 适配器管理(OneBot v11 / QQ 官方机器人,支持增删改查、启停、测试连接)
 - 服务器配置
 - 机器人配置
 - 群设置管理
@@ -57,7 +60,9 @@
 
 ### 部署架构
 
-陌城qqbot框架基于 **Python + OneBot v11 协议** 构建,部署需要两部分:
+陌城qqbot框架基于 **Python** 构建,支持两种适配器接入方式:
+
+### 方式一:OneBot v11 协议(第三方实现)
 
 ```
 QQ 协议端(NapCat/Lagrange)  ⇄  陌城qqbot框架(Python 程序)
@@ -65,8 +70,18 @@ QQ 协议端(NapCat/Lagrange)  ⇄  陌城qqbot框架(Python 程序)
 
 - **QQ 协议端**:负责与 QQ 服务器通信,收发消息
 - **陌城qqbot框架**:处理消息逻辑、插件、WebUI 管理后台
+- 两者通过 WebSocket 通信
+- 适合:需要完整 QQ 功能(群管、禁言、踢人等)的场景
 
-两者通过 WebSocket 通信。
+### 方式二:QQ 官方机器人接口(腾讯合规 API)
+
+```
+陌城qqbot框架(Python 程序)  ⇄  QQ 开放平台(q.qq.com)
+```
+
+- 直接对接腾讯官方机器人 API,无需第三方协议端
+- 合规不封号,但功能受限(被动回复为主,主动消息有配额)
+- 适合:需要合规运营的场景
 
 ### 部署步骤
 
@@ -210,6 +225,73 @@ systemctl status qqbot
 # 查看日志
 journalctl -u qqbot -f
 ```
+
+## 适配器配置
+
+框架支持在 WebUI「适配器管理」页面同时配置多个 bot 适配器,每种适配器类型调用对应的接口实现,互不混淆。
+
+### OneBot v11 适配器
+
+通过 OneBot v11 协议连接第三方 QQ 协议端(NapCat/Lagrange/go-cqhttp 等)。
+
+**配置项**:
+- 名称:适配器显示名(如「主群 OneBot」)
+- 类型:`onebot_v11`
+- 连接模式:
+  - `ws_client`(正向 WS):框架主动连接协议端的 WebSocket 服务
+  - `ws_server`(反向 WS):协议端主动连接框架的 WebSocket 服务
+- ws_client 模式:WebSocket 地址、Access Token
+- ws_server 模式:监听地址、端口、Access Token
+
+### QQ 官方机器人适配器
+
+直接对接腾讯 QQ 开放平台(https://q.qq.com)的官方机器人 API,合规无封号风险。
+
+**前置准备**:
+1. 访问 https://q.qq.com 注册开发者账号并创建机器人应用
+2. 获取机器人的 **AppID**、**AppSecret**
+3. 配置机器人权限(群@消息、C2C 消息等)
+4. 框架使用 WebSocket 模式接收事件,无需配置回调地址
+
+**配置项**:
+- 名称:适配器显示名(如「官方机器人」)
+- 类型:`qq_official`
+- AppID:机器人 AppID
+- AppSecret:机器人 AppSecret
+
+**事件支持**:
+- `GROUP_AT_MESSAGE_CREATE`:群@机器人消息(所有机器人默认可订阅,被动回复)
+- `GROUP_MESSAGE_CREATE`:群全量消息(需申请"全量消息"权限白名单,开通后才会推送)
+- `C2C_MESSAGE_CREATE`:C2C 私聊消息
+- `GROUP_ADD_ROBOT`/`GROUP_DEL_ROBOT`:机器人被加入/移出群
+- `FRIEND_ADD`/`FRIEND_DEL`:添加/删除好友
+
+**权限配置(重要)**:
+QQ 官方 API 不提供查询群成员角色的能力,因此 `GROUP_ADMIN`/`GROUP_OWNER` 权限在官方适配器下**回退到 `SUPERUSER` 检查**。使用官方适配器执行管理员命令(如"授权群聊")前,需将你的 `member_openid` 加入 `superusers` 配置:
+
+1. 在群里发任意消息,查看日志获取你的 `member_openid`:
+   ```
+   [消息] 适配器=qq_official 类型=group 群=xxx 用户=XXX 内容='xxx'
+   ```
+2. 将 `XXX`(member_openid)加入 `config/config.json` 的 `bot.superusers` 数组
+3. 重启框架
+
+**功能限制**:
+- `user_id` 是 `member_openid`(加密字符串,非 QQ 号),与 OneBot 适配器数据不互通
+- 不支持群管操作(禁言/踢人/撤回/群成员管理等)
+- 不支持 `get_group_member_info`、`get_group_member_list` 等查询 API
+- 被动回复限制:5 秒内需回复,AI 聊天等耗时操作可能超时
+- 主动消息有配额限制,需 msg_id 且有时效
+- `msg_type` 自动判定:纯文本=0、Markdown=2、Ark=3、图片(media)=7
+- 鉴权 token(access_token)由框架自动管理,按实际 expires_in 缓存(留 60 秒余量自动刷新)
+
+### 适配器隔离机制
+
+框架根据 `bot.adapter_type` 严格路由 API 调用:
+- `adapter_type = "onebot_v11"` → 调用 OneBot WebSocket API
+- `adapter_type = "qq_official"` → 调用官方 HTTPS API
+
+官方适配器不支持的 API(如 `set_group_kick`)会抛出 `NotImplementedError`,不会误调用 OneBot 适配器。两个适配器的群消息分别处理,群 ID 体系不同(OneBot 用数字群号,官方用 `group_openid`),授权管理、群设置等需分别配置。
 
 ## 在线自动更新
 
@@ -425,6 +507,18 @@ A: 建议部署到纯英文路径,如 D:\qqbot\ 或 /opt/qqbot/。
 
 **Q: 如何升级框架?**
 A: v2.0.1-beta 起支持在线自动更新(WebUI 一键更新或启动脚本检测)。旧版本请下载新版本压缩包覆盖(保留 config/ 目录)。
+
+**Q: QQ 官方适配器收不到消息?**
+A: 1) 确认 AppID/AppSecret 正确;2) 确认机器人已在群里被添加;3) 查看日志是否有"鉴权成功"和"收到事件"记录;4) 未开通"全量消息"权限时,只有 @机器人 才会收到事件(GROUP_AT_MESSAGE_CREATE)。
+
+**Q: QQ 官方适配器命令无法执行?**
+A: QQ 官方 API 不支持查询群成员角色,管理员命令需将 `member_openid` 加入 `superusers`。在群里发消息查看日志获取 member_openid,加入 `config/config.json` 的 `bot.superusers` 数组后重启。
+
+**Q: QQ 官方适配器和 OneBot 适配器数据能互通吗?**
+A: 不能。官方适配器的 user_id 是 member_openid(加密字符串),group_id 是 group_openid,与 OneBot 的 QQ 号和群号体系完全不同。两个适配器的积分、签到、统计等数据相互独立。
+
+**Q: 两个适配器能同时运行吗?**
+A: 可以。在 WebUI「适配器管理」页面同时添加并启用两个适配器,框架会并行启动,互不阻塞。但群消息会分别处理,群 ID 体系不同,授权管理需分别配置。
 
 ## 许可证
 

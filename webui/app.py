@@ -209,6 +209,7 @@ class AiChatGroupConfigUpdate(BaseModel):
     temperature: Optional[float] = None
     proactive_reply: Optional[bool] = None
     proactive_reply_probability: Optional[float] = None
+    show_reasoning: Optional[bool] = None
 
 
 class ScheduleConfigUpdate(BaseModel):
@@ -279,6 +280,20 @@ class GroupPanelConfigUpdate(BaseModel):
 class UserPointsUpdate(BaseModel):
     points: int
     operation: str = "set"
+
+
+class AdapterCreate(BaseModel):
+    name: str
+    type: str  # "onebot_v11" 或 "qq_official"
+    enabled: Optional[bool] = True
+    config: Dict[str, Any]
+
+
+class AdapterUpdate(BaseModel):
+    name: Optional[str] = None
+    type: Optional[str] = None
+    enabled: Optional[bool] = None
+    config: Optional[Dict[str, Any]] = None
 
 
 def _get_jwt_secret() -> str:
@@ -1450,6 +1465,91 @@ async def update_group_panel_user_points(group_id: str, user_id: str, data: User
         raise HTTPException(status_code=400, detail="无效的 operation，支持 set/add/subtract")
     checkin_data.update_user_data(gid_str, user_id, user_data)
     return {"success": True, "points": user_data["points"]}
+
+
+# === 适配器管理 API ===
+
+@app.get("/api/adapters")
+async def list_adapters(_=Depends(get_current_token)):
+    """获取所有适配器列表(附带运行状态)。"""
+    from core.adapters.manager import get_adapter_manager
+    adapters = config_manager.get_adapters()
+    mgr = get_adapter_manager()
+    result = []
+    for a in adapters:
+        item = dict(a)
+        running = mgr.get_adapter(a.get("id", ""))
+        item["running"] = running is not None and getattr(running, "is_running", False)
+        result.append(item)
+    return {"adapters": result}
+
+
+@app.post("/api/adapters")
+async def create_adapter(data: AdapterCreate, _=Depends(get_current_token)):
+    """新增适配器。"""
+    if data.type not in ("onebot_v11", "qq_official"):
+        raise HTTPException(status_code=400, detail="不支持的适配器类型")
+    adapter = config_manager.add_adapter(data.model_dump())
+    return {"adapter": adapter}
+
+
+@app.get("/api/adapters/{adapter_id}")
+async def get_adapter(adapter_id: str, _=Depends(get_current_token)):
+    """获取单个适配器。"""
+    adapter = config_manager.get_adapter_by_id(adapter_id)
+    if not adapter:
+        raise HTTPException(status_code=404, detail="适配器不存在")
+    return {"adapter": adapter}
+
+
+@app.put("/api/adapters/{adapter_id}")
+async def update_adapter(adapter_id: str, data: AdapterUpdate, _=Depends(get_current_token)):
+    """更新适配器。"""
+    updated = config_manager.update_adapter(adapter_id, data.model_dump(exclude_none=True))
+    if not updated:
+        raise HTTPException(status_code=404, detail="适配器不存在")
+    return {"adapter": updated}
+
+
+@app.delete("/api/adapters/{adapter_id}")
+async def delete_adapter(adapter_id: str, _=Depends(get_current_token)):
+    """删除适配器。"""
+    success = config_manager.delete_adapter(adapter_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="适配器不存在")
+    return {"success": True}
+
+
+@app.post("/api/adapters/{adapter_id}/test")
+async def test_adapter(adapter_id: str, _=Depends(get_current_token)):
+    """测试适配器连接。
+
+    已运行的适配器直接调用其 test_connection;
+    未运行的适配器临时创建实例测试(OneBot 调 get_login_info,官方调 get_app_info)。
+    """
+    from core.adapters.manager import get_adapter_manager
+    cfg = config_manager.get_adapter_by_id(adapter_id)
+    if not cfg:
+        raise HTTPException(status_code=404, detail="适配器不存在")
+    mgr = get_adapter_manager()
+    adapter = mgr.get_adapter(adapter_id)
+    if adapter:
+        # 适配器正在运行,直接测试
+        result = await adapter.test_connection()
+    else:
+        # 适配器未运行,临时创建实例测试
+        atype = cfg.get("type", "")
+        if atype == "onebot_v11":
+            from core.adapters.onebot_adapter import OneBotAdapter
+            adapter = OneBotAdapter(cfg["id"], cfg.get("name", ""), cfg.get("config", {}))
+            result = await adapter.test_connection()
+        elif atype == "qq_official":
+            from core.adapters.qq_official.adapter import QQOfficialAdapter
+            adapter = QQOfficialAdapter(cfg["id"], cfg.get("name", ""), cfg.get("config", {}))
+            result = await adapter.test_connection()
+        else:
+            raise HTTPException(status_code=400, detail="不支持的适配器类型")
+    return result
 
 
 # SPA catch-all: return index.html for any non-API GET route (must be after all API routes)

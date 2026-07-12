@@ -54,9 +54,15 @@ async def _check_superuser(bot: Any, event: Any) -> bool:
 
 
 async def _check_group_admin(bot: Any, event: Any) -> bool:
-    """检查用户是否为群管理员。通过 bot.get_group_member_info 获取 role。"""
+    """检查用户是否为群管理员。通过 bot.get_group_member_info 获取 role。
+
+    QQ 官方适配器不支持 get_group_member_info,回退到 SUPERUSER 检查。
+    """
     if not hasattr(event, "group_id") or not event.group_id:
         return False
+    # QQ 官方适配器无法查询群成员角色,回退到 SUPERUSER
+    if getattr(bot, "adapter_type", "") == "qq_official":
+        return await _check_superuser(bot, event)
     try:
         info = await bot.get_group_member_info(
             group_id=event.group_id, user_id=event.user_id
@@ -67,9 +73,15 @@ async def _check_group_admin(bot: Any, event: Any) -> bool:
 
 
 async def _check_group_owner(bot: Any, event: Any) -> bool:
-    """检查用户是否为群主。"""
+    """检查用户是否为群主。
+
+    QQ 官方适配器不支持 get_group_member_info,回退到 SUPERUSER 检查。
+    """
     if not hasattr(event, "group_id") or not event.group_id:
         return False
+    # QQ 官方适配器无法查询群成员角色,回退到 SUPERUSER
+    if getattr(bot, "adapter_type", "") == "qq_official":
+        return await _check_superuser(bot, event)
     try:
         info = await bot.get_group_member_info(
             group_id=event.group_id, user_id=event.user_id

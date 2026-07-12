@@ -47,11 +47,12 @@ class WSClientManager:
     Bot 作为客户端主动连接 OneBot 实现的 WebSocket 服务端。
     """
     
-    def __init__(self):
+    def __init__(self, adapter_id: str = "default"):
         self._session: Optional[aiohttp.ClientSession] = None
         self._bot: Optional[Bot] = None
         self._running = False
         self._task: Optional[asyncio.Task] = None
+        self.adapter_id = adapter_id  # 适配器唯一标识,用于日志
     
     async def start(self, url: str, access_token: str = ""):
         """启动正向 WS 客户端连接循环。
@@ -107,11 +108,11 @@ class WSClientManager:
                                 # LifecycleMetaEvent — 创建 Bot
                                 if isinstance(event, LifecycleMetaEvent):
                                     self_id = str(event.self_id)
-                                    bot = Bot(ws, self_id)
+                                    bot = Bot(ws, self_id, adapter_type="onebot_v11")
                                     self._bot = bot
                                     driver = get_driver()
                                     await driver.trigger_bot_connect(bot)
-                                    logger.info(f"Bot {self_id} connected")
+                                    logger.info(f"[适配器 {self.adapter_id}] Bot {self_id} connected")
                                     continue
 
                                 # 日志: 收到事件
@@ -184,13 +185,13 @@ class WSServerManager:
     def __init__(self):
         self._connections = {}  # self_id -> Bot
     
-    def setup_routes(self, app: FastAPI, access_token: str = ""):
+    def setup_routes(self, app: FastAPI, access_token: str = "", endpoint: str = "/onebot/v11/ws"):
         """在 FastAPI 应用上注册 WebSocket 端点。
         
         OneBot 实现会连接到 ws://host:port/onebot/v11/ws
         """
         
-        @app.websocket("/onebot/v11/ws")
+        @app.websocket(endpoint)
         async def ws_endpoint(websocket: WebSocket):
             # 鉴权
             if access_token:
@@ -221,7 +222,7 @@ class WSServerManager:
                         # LifecycleMetaEvent — 创建 Bot
                         if getattr(event, "post_type", None) == "meta_event" and getattr(event, "meta_event_type", None) == "lifecycle":
                             self_id = str(event.self_id)
-                            bot = Bot(websocket, self_id)
+                            bot = Bot(websocket, self_id, adapter_type="onebot_v11")
                             self._connections[self_id] = bot
                             driver = get_driver()
                             await driver.trigger_bot_connect(bot)

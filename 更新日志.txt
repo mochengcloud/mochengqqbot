@@ -1,6 +1,126 @@
 陌城qqbot框架 更新日志
 ========================================
 
+v2.0.1-beta-update-3
+----------------------------------------
+【新增】多适配器架构
+  - 框架支持同时接入多个 bot 适配器,WebUI 后台可视化管理
+  - 适配器类型:OneBot v11(NapCat/Lagrange 等)与 QQ 官方机器人接口
+  - core/adapters/ 新增适配器抽象基类与具体实现
+  - AdapterManager 全局单例,统一管理多适配器的创建、启动、停止、重载
+  - 启动时并行启动所有 enabled 适配器,互不阻塞
+
+【新增】QQ 官方机器人适配器
+  - 实现 QQ 开放平台(https://q.qq.com)官方机器人接口接入
+  - 鉴权:AppID + AppSecret 换取 access_token,按实际 expires_in 缓存(留 60 秒余量自动刷新)
+  - WebSocket 事件接收:完整实现 IDENTIFY(op=2)/Hello(op=10)/心跳(op=1/11)/
+    Reconnect(op=7)/Invalid Session(op=9)/Resume(op=6) 协议
+  - 事件转换:支持 GROUP_AT_MESSAGE_CREATE(群@机器人)、
+    GROUP_MESSAGE_CREATE(群全量消息,需白名单)、AT_MESSAGE_CREATE(频道@机器人)、
+    C2C_MESSAGE_CREATE(私聊)、GROUP_ADD/DEL_ROBOT、FRIEND_ADD/DEL
+  - 消息发送:bot.send_group_msg 转译为官方 /v2/groups/{group_openid}/messages
+  - 消息段格式转换:OneBot MessageSegment ↔ 官方 msg_type/content/image
+  - msg_type 自动判定:纯文本=0、Markdown=2、Ark=3、图片(media)=7
+  - msg_seq 防重复:被动回复时为每个 msg_id 递增 msg_seq
+  - @机器人标签剥离:自动移除 content 中的 <qqbotuser> 标签
+
+【新增】适配器隔离机制
+  - 根据 bot.adapter_type 严格路由 API 调用
+  - OneBot 适配器只调 OneBot WS API,官方适配器只调官方 HTTPS API
+  - 官方适配器不支持的 API 抛 NotImplementedError,不会误调 OneBot
+
+【新增】WebUI 适配器管理页
+  - 侧边栏「连接配置」新增「适配器管理」入口
+  - 支持列表/新增/编辑/删除/启停/测试连接
+  - 根据适配器类型动态渲染配置表单
+  - 测试连接:OneBot 调 get_login_info,官方调 /users/@me
+
+【新增】配置向后兼容
+  - 旧配置(仅有 onebot 字段)启动时自动迁移为 adapters 数组
+  - 保留 get_onebot_config 等 API,Connection 页面继续工作
+
+【变更】启动流程
+  - BotApp.run() 委托 AdapterManager 全局单例启动所有适配器
+  - lifecycle._bots 按 (self_id, adapter_type) 索引,支持同 self_id 跨适配器
+  - 启动横幅遍历 adapters 列表输出每个适配器的连接信息
+
+【变更】权限系统
+  - QQ 官方适配器不支持 get_group_member_info,无法查询群成员角色
+  - GROUP_ADMIN/GROUP_OWNER 权限在官方适配器下回退到 SUPERUSER 检查
+  - 使用官方适配器需将 member_openid 加入 superusers 配置
+
+【修复】QQ 官方适配器 API 路径
+  - 修正 getAppAccessToken 调用路径
+  - get_app_info 从 /v2/app 改为 /users/@me(官方基础接口用根路径)
+  - 获取 WebSocket 网关从 /v2/gateway 改为 /gateway
+
+【修复】WebSocket 事件接收
+  - 修正 OpCode 处理:op=0 分发事件、op=10 启动心跳+IDENTIFY、
+    op=11 心跳ACK、op=7 Reconnect、op=9 Invalid Session
+  - 修正 intents 订阅:GROUP_AND_C2C_EVENT(1<<25) 而非 PUBLIC_GUILD_MESSAGES(1<<30)
+  - 修正事件类型字段名:从 payload.type 改为 payload.t
+  - 新增 READY 事件处理(提取 session_id)、RESUMED 事件处理
+  - 新增 Resume 机制:断线重连时优先用 op=6 恢复会话
+
+【修复】事件转换
+  - 修正 attachments 字段名:从 type 改为 content_type
+  - 新增 @机器人标签剥离(_strip_bot_mention)
+  - 正确字段映射:群消息用 member_openid、C2C 用 user_openid、群 ID 用 group_openid
+
+【修复】消息发送
+  - 修正图片 msg_type:从 1 改为 7(官方 media 类型)
+  - 新增 msg_seq 防重复机制
+  - 修正类型注解:group_id/user_id 为 str(openid 是字符串)
+
+【修复】鉴权与连接
+  - 修正 token 缓存时间:从固定 6600 秒改为 expires_in - 60
+  - 修复 ClientSession 跨事件循环使用导致的 Timeout 错误
+  - test_connection 始终创建临时 client,不复用已运行适配器的 client
+
+【修复】命令匹配与权限诊断
+  - event_bus 新增消息事件接收日志和命令匹配诊断日志
+  - event_bus 新增权限拒绝日志,便于定位权限问题
+
+【注意事项】QQ 官方适配器限制
+  - user_id 是 member_openid(加密字符串,非 QQ 号),与 OneBot 数据不互通
+  - 不支持群成员角色查询,管理员命令需将 member_openid 加入 superusers
+  - 不支持禁言、踢人、撤回等群管操作
+  - 被动回复限制:5 秒内需回复,AI 聊天等耗时操作可能超时
+  - 主动消息有配额限制,需 msg_id 且有时效
+  - GROUP_MESSAGE_CREATE(全量消息)需申请白名单权限,未开通则只收 GROUP_AT_MESSAGE_CREATE
+
+
+v2.0.1-beta-update-2
+----------------------------------------
+【优化】思考模型支持
+  - AI 聊天新增「输出思考内容」开关(群级配置,WebUI 可修改)
+  - 关闭时:省略思考内容,仅发送正式回复(默认行为,节省 token 与阅读成本)
+  - 开启时:将思考内容与正式回复一起发送,格式为「💭 思考过程 + 💬 回复」
+  - 兼容多种思考模型字段:reasoning_content(DeepSeek-R1)、
+    reasoning(OpenAI o1)、thinking(QwQ/部分供应商)
+  - 思考内容不写入对话上下文,避免污染历史消息影响后续回复质量
+  - 支持批量配置:WebUI 批量更新群 AI 配置时可一并设置此项
+
+【新增】配置向后兼容
+  - 旧配置文件自动补全 show_reasoning 字段(默认 False),无需手动迁移
+
+
+v2.0.1-beta-update-1
+----------------------------------------
+【新增】统一插件调用格式
+  - 扩展 plugins/utils.py 为完整工具库,新增统一消息构造函数
+    (reply_msg/at_msg 等)与 JsonDataManager 基类(懒加载+线程锁+延迟保存)
+  - core/onebot/bot.py 新增 17 个 typed API 方法,覆盖常用 OneBot v11 接口
+
+【新增】在线更新保留自定义插件
+  - core/updater.py 新增 _BUILTIN_PLUGINS 内置插件清单
+  - 更新时仅覆盖清单内的内置插件,plugins/ 目录下用户自定义插件原样保留
+
+【新增】插件开发文档
+  - 官网新增 develop.php 插件开发文档(12 章完整教程)
+  - README.md 新增「插件开发」章节
+
+
 v2.0.1-beta
 ----------------------------------------
 【新增】在线自动更新功能

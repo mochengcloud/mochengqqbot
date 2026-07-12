@@ -59,6 +59,9 @@ class ConfigManager:
         if self.config_path.exists():
             with open(self.config_path, "r", encoding="utf-8") as f:
                 self.config = json.load(f)
+            # 自动迁移:旧配置(仅有 onebot 字段)转换为 adapters 数组
+            if "adapters" not in self.config or not self.config.get("adapters"):
+                self._migrate_adapters()
         else:
             self.config = self._get_default_config()
             self.config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -104,6 +107,7 @@ class ConfigManager:
                     "timeout": 30
                 }
             },
+            "adapters": [],
             "server": {
                 "host": "0.0.0.0",
                 "port": 8080,
@@ -191,7 +195,93 @@ class ConfigManager:
             self.config["onebot"] = self._get_default_config()["onebot"]
         self.config["onebot"]["http"] = http_config
         self._mark_dirty()
-    
+
+    def _migrate_adapters(self) -> None:
+        """迁移:若 adapters 缺失但 onebot 存在,转换为一条默认 onebot_v11 适配器。"""
+        if "adapters" not in self.config or not self.config["adapters"]:
+            onebot = self.config.get("onebot", {})
+            mode = onebot.get("mode", "ws_client")
+            if mode == "ws_client":
+                ws_cfg = onebot.get("ws_client", {})
+                adapter_config = {
+                    "mode": "ws_client",
+                    "url": ws_cfg.get("url", "ws://127.0.0.1:3001"),
+                    "access_token": ws_cfg.get("access_token", ""),
+                    "reconnect_interval": ws_cfg.get("reconnect_interval", 5),
+                    "heartbeat_interval": ws_cfg.get("heartbeat_interval", 30),
+                }
+            else:
+                ws_cfg = onebot.get("ws_server", {})
+                adapter_config = {
+                    "mode": "ws_server",
+                    "host": ws_cfg.get("host", "0.0.0.0"),
+                    "port": ws_cfg.get("port", 3000),
+                    "access_token": ws_cfg.get("access_token", ""),
+                }
+            self.config["adapters"] = [{
+                "id": "default-onebot",
+                "name": "默认 OneBot",
+                "type": "onebot_v11",
+                "enabled": True,
+                "config": adapter_config,
+            }]
+            self._mark_dirty()
+
+    def get_adapters(self) -> list:
+        """获取所有适配器配置。若不存在则自动迁移。"""
+        if "adapters" not in self.config:
+            self._migrate_adapters()
+        return self.config.get("adapters", [])
+
+    def get_adapter_by_id(self, adapter_id: str) -> Optional[Dict[str, Any]]:
+        """按 id 获取单个适配器配置。"""
+        for a in self.get_adapters():
+            if a.get("id") == adapter_id:
+                return a
+        return None
+
+    def add_adapter(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """新增适配器。data 含 name/type/enabled/config。自动生成唯一 id。"""
+        if "adapters" not in self.config:
+            self._migrate_adapters()
+        import uuid
+        adapter = {
+            "id": f"adapter-{uuid.uuid4().hex[:8]}",
+            "name": data.get("name", ""),
+            "type": data.get("type", "onebot_v11"),
+            "enabled": data.get("enabled", True),
+            "config": data.get("config", {}),
+        }
+        self.config["adapters"].append(adapter)
+        self._mark_dirty()
+        return adapter
+
+    def update_adapter(self, adapter_id: str, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """更新适配器配置。data 中字段可选(name/type/enabled/config)。"""
+        for a in self.get_adapters():
+            if a.get("id") == adapter_id:
+                if "name" in data:
+                    a["name"] = data["name"]
+                if "type" in data:
+                    a["type"] = data["type"]
+                if "enabled" in data:
+                    a["enabled"] = data["enabled"]
+                if "config" in data:
+                    a["config"] = data["config"]
+                self._mark_dirty()
+                return a
+        return None
+
+    def delete_adapter(self, adapter_id: str) -> bool:
+        """删除适配器。返回是否删除成功。"""
+        adapters = self.get_adapters()
+        for i, a in enumerate(adapters):
+            if a.get("id") == adapter_id:
+                adapters.pop(i)
+                self._mark_dirty()
+                return True
+        return False
+
     def get_server_config(self) -> Dict[str, Any]:
         return self.config.get("server", {"host": "0.0.0.0", "port": 8080, "webui_port": 8081})
     
@@ -1307,7 +1397,8 @@ class ConfigManager:
             "max_tokens": 2048,
             "temperature": 0.7,
             "proactive_reply": False,
-            "proactive_reply_probability": 0.1
+            "proactive_reply_probability": 0.1,
+            "show_reasoning": False
         }
 
     def _ensure_ai_chat_group_config(self, group_id: int) -> Dict[str, Any]:
@@ -1325,6 +1416,12 @@ class ConfigManager:
             for old_key in ("trigger", "trigger_modes", "at_trigger"):
                 if old_key in gs["ai_chat"]:
                     gs["ai_chat"].pop(old_key)
+                    changed = True
+            # 自动补全新增字段(向后兼容旧配置)
+            defaults = self._get_default_ai_chat_group_config()
+            for key, value in defaults.items():
+                if key not in gs["ai_chat"]:
+                    gs["ai_chat"][key] = value
                     changed = True
             if changed:
                 self._mark_dirty()

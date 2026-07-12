@@ -129,7 +129,11 @@ async def _call_chat_api(api_base: str, api_key: str, model: str,
                          messages: List[dict], max_tokens: int = 2048,
                          temperature: float = 0.7,
                          api_format: str = "openai",
-                         images: Optional[List[str]] = None) -> str:
+                         images: Optional[List[str]] = None) -> tuple:
+    """调用 AI 供应商 API,返回 (content, reasoning) 元组。
+
+    reasoning 为思考内容(思考模型才有),非思考模型返回空字符串。
+    """
     if api_format == "ollama":
         # Ollama格式: POST /api/chat
         url = f"{api_base.rstrip('/')}/api/chat"
@@ -193,9 +197,22 @@ async def _call_chat_api(api_base: str, api_key: str, model: str,
             raise Exception(f"API请求失败({resp.status}): {msg}")
         data = await resp.json()
         if api_format == "ollama":
-            return data["message"]["content"]
+            msg = data.get("message", {}) or {}
+            content = msg.get("content", "") or ""
+            reasoning = msg.get("reasoning_content", "") or msg.get("thinking", "") or ""
+            return content, reasoning
         else:
-            return data["choices"][0]["message"]["content"]
+            choices = data.get("choices", [])
+            if not choices:
+                return "", ""
+            message = choices[0].get("message", {}) or {}
+            content = message.get("content", "") or ""
+            # 思考模型字段:reasoning_content(DeepSeek-R1)、reasoning(OpenAI o1)、thinking(部分供应商)
+            reasoning = (message.get("reasoning_content", "")
+                        or message.get("reasoning", "")
+                        or message.get("thinking", "")
+                        or "")
+            return content, reasoning
 
 
 async def _call_with_failover(
@@ -211,8 +228,8 @@ async def _call_with_failover(
         providers_order: 有序供应商列表,每项为 (provider_name, provider_config, model)
                          provider_config 含 api_base/api_key/api_format/default_model
     Returns:
-        (reply_text, used_provider_name, used_model) 成功时
-        (None, None, None) 全部失败时
+        (reply_text, used_provider_name, used_model, reasoning) 成功时
+        (None, None, None, None) 全部失败时
     """
     last_error = ""
     for provider_name, provider, model in providers_order:
@@ -220,17 +237,17 @@ async def _call_with_failover(
         api_key = provider.get("api_key", "")
         api_format = provider.get("api_format", "openai")
         try:
-            reply = await _call_chat_api(
+            content, reasoning = await _call_chat_api(
                 api_base, api_key, model, messages,
                 max_tokens=max_tokens, temperature=temperature,
                 api_format=api_format, images=images,
             )
-            return reply, provider_name, model
+            return content, provider_name, model, reasoning
         except Exception as e:
             last_error = str(e)
             # 继续尝试下一个供应商
             continue
-    return None, None, None
+    return None, None, None, None
 
 
 async def _fetch_models(api_base: str, api_key: str, api_format: str = "openai") -> List[str]:
@@ -359,7 +376,7 @@ async def handle_ai_chat(bot: Bot, event: GroupMessageEvent):
                             f"{user_input[:100]}{' [+图片]' if image_base64_list else ''}")
 
     # 调用API(带故障转移:首选失败自动切换备用供应商)
-    reply, used_provider, used_model = await _call_with_failover(
+    reply, used_provider, used_model, reasoning = await _call_with_failover(
         providers_order, messages,
         max_tokens=max_tokens, temperature=temperature,
         images=image_base64_list if image_base64_list else None,
@@ -369,7 +386,7 @@ async def handle_ai_chat(bot: Bot, event: GroupMessageEvent):
         log_manager.log_command(user_id, group_id, "AI聊天错误", "所有供应商均不可用")
         await ai_chat_handler.finish(reply_msg(event, "无可用AI供应商，请联系管理员"))
 
-    # 更新上下文
+    # 仅保存正式回复到上下文(思考内容不入上下文,避免污染历史)
     ctx_messages.append({"role": "user", "content": user_input})
     ctx_messages.append({"role": "assistant", "content": reply})
     # 限制上下文长度
@@ -377,11 +394,20 @@ async def handle_ai_chat(bot: Bot, event: GroupMessageEvent):
         ctx_messages = ctx_messages[-max_context * 2:]
     _set_context(key, ctx_messages)
 
-    # 截断过长回复
-    if len(reply) > 4500:
-        reply = reply[:4490] + "\n...(回复过长已截断)"
+    # 思考内容处理:根据群配置决定是否输出
+    show_reasoning = group_ai_config.get("show_reasoning", False)
+    if show_reasoning and reasoning:
+        # 开启思考输出:思考内容 + 正式回复一起发送
+        final_reply = f"💭 思考过程：\n{reasoning}\n\n💬 回复：\n{reply}"
+    else:
+        # 关闭思考输出:仅发送正式回复(省略思考内容)
+        final_reply = reply
 
-    await ai_chat_handler.finish(reply_msg(event, reply))
+    # 截断过长回复
+    if len(final_reply) > 4500:
+        final_reply = final_reply[:4490] + "\n...(回复过长已截断)"
+
+    await ai_chat_handler.finish(reply_msg(event, final_reply))
 
 
 async def _handle_list_models(bot: Bot, event: GroupMessageEvent, group_ai_config: dict):

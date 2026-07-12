@@ -30,10 +30,11 @@ class Bot:
     WebSocket 连接由外部传入(支持 ``send`` 或 ``send_str`` 接口)。
     """
 
-    def __init__(self, ws, self_id: str, app: Any = None):
+    def __init__(self, ws, self_id: str, app: Any = None, adapter_type: str = "onebot_v11"):
         self.ws = ws
         self.self_id = self_id
         self.app = app
+        self.adapter_type = adapter_type
         self._api_futures = {}  # echo -> Future
         self._echo_counter = 0
 

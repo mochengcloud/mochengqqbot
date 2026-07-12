@@ -9,7 +9,7 @@ class LifecycleManager:
         self._shutdown_hooks: List[Callable] = []
         self._bot_connect_hooks: List[Callable] = []
         self._bot_disconnect_hooks: List[Callable] = []
-        self._bots: Dict[str, Any] = {}  # self_id -> Bot 实例
+        self._bots: Dict[tuple, Any] = {}  # (self_id, adapter_type) -> Bot 实例
     
     def on_startup(self, func):
         """注册启动钩子(支持同步和异步函数)"""
@@ -47,7 +47,8 @@ class LifecycleManager:
     
     async def trigger_bot_connect(self, bot):
         """触发 Bot 连接钩子"""
-        self._bots[bot.self_id] = bot
+        key = (bot.self_id, getattr(bot, "adapter_type", "onebot_v11"))
+        self._bots[key] = bot
         for hook in self._bot_connect_hooks:
             result = hook(bot)
             if asyncio.iscoroutine(result):
@@ -55,21 +56,25 @@ class LifecycleManager:
     
     async def trigger_bot_disconnect(self, bot):
         """触发 Bot 断连钩子"""
-        self._bots.pop(bot.self_id, None)
+        key = (bot.self_id, getattr(bot, "adapter_type", "onebot_v11"))
+        self._bots.pop(key, None)
         for hook in self._bot_disconnect_hooks:
             result = hook(bot)
             if asyncio.iscoroutine(result):
                 await result
     
-    def get_bot(self) -> Optional[Any]:
-        """获取当前连接的第一个 Bot 实例"""
-        for bot in self._bots.values():
-            return bot
+    def get_bot(self, adapter_type: Optional[str] = None) -> Optional[Any]:
+        """获取第一个连接的 Bot 实例。可按 adapter_type 筛选。"""
+        for (sid, atype), bot in self._bots.items():
+            if adapter_type is None or atype == adapter_type:
+                return bot
         return None
     
-    def get_bots(self) -> Dict[str, Any]:
-        """获取所有已连接的 Bot 实例"""
-        return self._bots
+    def get_bots(self, adapter_type: Optional[str] = None) -> Dict[tuple, Any]:
+        """获取所有已连接的 Bot 实例。可按 adapter_type 筛选。"""
+        if adapter_type is None:
+            return dict(self._bots)
+        return {k: v for k, v in self._bots.items() if k[1] == adapter_type}
 
 
 # 全局单例
@@ -79,11 +84,11 @@ _lifecycle = LifecycleManager()
 def get_driver() -> LifecycleManager:
     return _lifecycle
 
-def get_bot():
-    return _lifecycle.get_bot()
+def get_bot(adapter_type: Optional[str] = None):
+    return _lifecycle.get_bot(adapter_type)
 
-def get_bots() -> Dict[str, Any]:
-    return _lifecycle.get_bots()
+def get_bots(adapter_type: Optional[str] = None) -> Dict[tuple, Any]:
+    return _lifecycle.get_bots(adapter_type)
 
 # 装饰器(替代 nonebot 的 @driver.on_startup 等)
 def on_startup(func):
